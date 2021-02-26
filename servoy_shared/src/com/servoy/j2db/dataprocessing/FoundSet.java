@@ -196,8 +196,27 @@ public abstract class FoundSet implements IFoundSetInternal, IRowListener, Scrip
 		return proto;
 	}
 
-	//must be used by subclasses
+	// use this constructor variant to have creationSqlSelect and pksAndRecords.setPksAndQuery set automatically
 	protected FoundSet(IFoundSetManagerInternal app, IRecordInternal a_parent, String relation_name, SQLSheet sheet, QuerySelect pkSelect,
+		List<SortColumn> defaultSortColumns) throws ServoyException
+	{
+		this(app, a_parent, relation_name, sheet, defaultSortColumns);
+		if (rowManager != null && !(a_parent instanceof FindState)) rowManager.register(this);
+
+		if (sheet.getTable() != null && pkSelect == null)
+		{
+			creationSqlSelect = fsm.getSQLGenerator().getPKSelectSqlSelect(this, sheet.getTable(), null, null, true, null, lastSortColumns, false);
+		}
+		else
+		{
+			creationSqlSelect = AbstractBaseQuery.deepClone(pkSelect);
+		}
+
+		pksAndRecords.setPksAndQuery(new BufferedDataSet(), 0, AbstractBaseQuery.deepClone(creationSqlSelect));
+	}
+
+	// If subclass uses this constructor variant, it must set creationSqlSelectand and call .setPksAndQuery(..) on getPksAndRecords(), see RelatedFoundset for example
+	protected FoundSet(IFoundSetManagerInternal app, IRecordInternal a_parent, String relation_name, SQLSheet sheet,
 		List<SortColumn> defaultSortColumns) throws ServoyException
 	{
 		fsm = (FoundSetManager)app;
@@ -211,21 +230,11 @@ public abstract class FoundSet implements IFoundSetInternal, IRowListener, Scrip
 		this.sheet = sheet;
 
 		rowManager = fsm.getRowManager(fsm.getDataSource(sheet.getTable()));
-		if (rowManager != null && !(a_parent instanceof FindState)) rowManager.register(this);
+
 		// null default sort columns means: use sort columns from query
 		defaultSort = defaultSortColumns;
 		lastSortColumns = defaultSort;
 
-		if (sheet.getTable() != null && pkSelect == null)
-		{
-			creationSqlSelect = fsm.getSQLGenerator().getPKSelectSqlSelect(this, sheet.getTable(), null, null, true, null, lastSortColumns, false);
-		}
-		else
-		{
-			creationSqlSelect = AbstractBaseQuery.deepClone(pkSelect);
-		}
-
-		pksAndRecords.setPksAndQuery(new BufferedDataSet(), 0, AbstractBaseQuery.deepClone(creationSqlSelect));
 		aggregateCache = new HashMap<String, Object>(6);
 		findMode = false;
 	}
