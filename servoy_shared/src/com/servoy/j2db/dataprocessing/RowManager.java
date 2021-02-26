@@ -17,7 +17,9 @@
 package com.servoy.j2db.dataprocessing;
 
 
+import java.lang.ref.Reference;
 import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
 import java.rmi.RemoteException;
 import java.sql.Types;
 import java.util.ArrayList;
@@ -34,6 +36,7 @@ import java.util.Map.Entry;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import com.servoy.base.persistence.IBaseColumn;
 import com.servoy.base.query.IBaseSQLCondition;
@@ -49,6 +52,7 @@ import com.servoy.j2db.persistence.Table;
 import com.servoy.j2db.query.AbstractBaseQuery;
 import com.servoy.j2db.query.IQuerySelectValue;
 import com.servoy.j2db.query.ISQLUpdate;
+import com.servoy.j2db.query.Placeholder;
 import com.servoy.j2db.query.QueryColumn;
 import com.servoy.j2db.query.QueryColumnValue;
 import com.servoy.j2db.query.QueryDelete;
@@ -78,7 +82,17 @@ public class RowManager implements IModificationListener, IFoundSetEventListener
 	private final ReferenceQueue<Row> referenceQueue;
 	private final Map<String, SoftReferenceWithData<Row, Pair<Map<String, List<CalculationDependency>>, CalculationDependencyData>>> pkRowMap; // pkString -> SoftReference(Row)
 	private final SQLSheet sheet;
+
+	// fields for legacy notifyChange impl.
 	private final WeakHashMap<IRowListener, Object> listeners;
+	private static Object dummy = new Object();
+
+	// fields for new, optimized notifyChange impl.
+	private final List<IRowListener> unrelatedFoundSets;
+	private final Map<List<String>, Map<String, List<Reference<IRowListener>>>> relatedListeners;
+	private final ReferenceQueue<IRowListener> cachedListenersCleanupQueue;
+	private final Map<Reference<IRowListener>, Pair<List<String>, Object[]>> pathToRef;
+
 	private final Set<NamedLock> lockedRowPKs;
 	private final Map<String, Set<String>> globalCalcDependencies = new HashMap<String, Set<String>>();
 	private final Map<String, Set<String>> relationsUsedInCalcs = new HashMap<String, Set<String>>();
@@ -92,7 +106,14 @@ public class RowManager implements IModificationListener, IFoundSetEventListener
 		this.sheet = sheet;
 		pkRowMap = new ConcurrentHashMap<String, SoftReferenceWithData<Row, Pair<Map<String, List<CalculationDependency>>, CalculationDependencyData>>>(64);
 		referenceQueue = new ReferenceQueue<Row>();
+
 		listeners = new WeakHashMap<IRowListener, Object>(10);
+
+		unrelatedFoundSets = new CopyOnWriteArrayList<IRowListener>();
+		relatedListeners = new ConcurrentHashMap<List<String>, Map<String, List<Reference<IRowListener>>>>();
+		cachedListenersCleanupQueue = new ReferenceQueue<IRowListener>();
+		pathToRef = new ConcurrentHashMap<Reference<IRowListener>, Pair<List<String>, Object[]>>();
+
 		lockedRowPKs = Collections.synchronizedSet(new HashSet<NamedLock>());//my locks
 	}
 
@@ -101,21 +122,186 @@ public class RowManager implements IModificationListener, IFoundSetEventListener
 		fsm.removeGlobalFoundsetEventListener(this);
 	}
 
-	private static Object dummy = new Object();
-
 	void register(IRowListener fs)
 	{
-		synchronized (listeners)
+		if (fsm.experimentalFoundSetNotifyChange)
 		{
-			listeners.put(fs, dummy);
+			// Remove indexed listeners that have been GC'ed
+			while (true)
+			{
+				Reference< ? extends IRowListener> ref = cachedListenersCleanupQueue.poll();
+
+				if (ref == null) break;
+
+				Pair<List<String>, Object[]> mapping = pathToRef.remove(ref);
+
+				Map<String, List<Reference<IRowListener>>> listenersByHash;
+
+				if ((listenersByHash = relatedListeners.get(mapping.getLeft())) != null) // for safety, but should not really be possible that it is null, because keys in relatedListeners never get cleared
+				{
+					// CHECKME double-check that we cannot run into a deadlock when modifying refs inside the compute
+
+					// Removing the ref and clearing the hash while at it, if refs has become empty
+					listenersByHash.computeIfPresent(createPKHashKey(mapping.getRight()), (k, refs) -> {
+						refs.remove(ref);
+
+						return refs.isEmpty() ? null : refs;
+					});
+				}
+				else
+				{
+					Debug.error("relatedListeners is missing an entry for " + mapping.getLeft().toString()); //$NON-NLS-1$
+				}
+			}
+
+			if (fs instanceof RelatedFoundSet)
+			{
+				Pair<List<String>, Object[]> mapping = ((RelatedFoundSet)fs).getRelationKeysValueMapping();
+				Map<String, List<Reference<IRowListener>>> listenersByHash = relatedListeners.computeIfAbsent(mapping.getLeft(),
+					(k) -> new ConcurrentHashMap<String, List<Reference<IRowListener>>>());
+				Reference<IRowListener> ref = new WeakReference<IRowListener>(fs, cachedListenersCleanupQueue);
+				Object[] whereArgs = mapping.getRight();
+				String hash = createPKHashKey(whereArgs);
+
+				pathToRef.put(ref, mapping);
+
+				for (Object whereArg : whereArgs)
+				{
+					if (whereArg instanceof DbIdentValue && ((DbIdentValue)whereArg).getPkValue() == null)
+					{
+						/*
+						 * TODO these three values are required to be able to determine where to remap at some stage whereArgs[i] mapping.getLeft() hash
+						 *
+						 * But it's more complex: - a DBIdent instance might never get its PK set, if a newly created record is deleted before being saved - a
+						 * cached RFS might depend on multiple DBIdent values
+						 */
+					}
+				}
+
+				listenersByHash.compute(hash, (k, refs) -> {
+					if (refs == null)
+					{
+						refs = new CopyOnWriteArrayList<Reference<IRowListener>>();
+					}
+
+					refs.add(ref);
+					return refs;
+				});
+			}
+			else
+			{
+				unrelatedFoundSets.add(fs);
+			}
+		}
+		else
+		{
+			synchronized (listeners)
+			{
+				listeners.put(fs, dummy);
+			}
 		}
 	}
 
 	void unregister(IRowListener fs)
 	{
-		synchronized (listeners)
+		if (fsm.experimentalFoundSetNotifyChange)
 		{
-			listeners.remove(fs);
+			if (fs instanceof RelatedFoundSet)
+			{
+				Debug.warn("Cannot dispose the related foundset:  " + ((RelatedFoundSet)fs).getRelationName() + ", fs: " + fs); //$NON-NLS-1$ //$NON-NLS-2$
+			}
+			else
+			{
+				unrelatedFoundSets.remove(fs);
+			}
+		}
+		else
+		{
+			synchronized (listeners)
+			{
+				listeners.remove(fs);
+			}
+		}
+	}
+
+	void forEachListener(RowEvent e)
+	{
+		forEachListener(e, null);
+	}
+
+	void forEachListener(RowEvent e, IRowListener skip)
+	{
+		Row row = e.getRow();
+
+		for (IRowListener iRowListener : unrelatedFoundSets)
+		{
+			if (iRowListener != skip)
+			{
+				iRowListener.notifyChange(e);
+			}
+		}
+
+		for (Entry<List<String>, Map<String, List<Reference<IRowListener>>>> entry : relatedListeners.entrySet())
+		{
+			Map<String, List<Reference<IRowListener>>> listenersByHash = entry.getValue();
+
+			// CHECKME .clearCalcs(...) calls fireNotifyChange with a null value for the row, which triggers a .notifyChange(...) for ALL foundsets
+			//	not sure if that is a mistake or not, but at least (for now) it necessitates the if/else here
+			//  NOTe there are other places too where it calls this without a row...
+			if (row != null)
+			{
+				int i = 0;
+
+				List<String> keys = entry.getKey();
+				Object[] rowValues = new Object[keys.size()];
+
+				for (String key : entry.getKey())
+				{
+					Object rowValue = row.getRawValue(key); // This already unwraps DBIdent values
+					Object matchValue = getSQLSheet().getTable().getColumn(key).getAsRightType(rowValue); // CHECKME is this really needed? Wouldn't createPKHashKey(values) already flatten this out?
+
+					if (matchValue instanceof String)
+					{
+						// Legacy behavior, as some databases (or collations) do case insensitive matching.
+						//	imho should either be a setting or determined @runtime once for a database server
+						matchValue = ((String)matchValue).toLowerCase();
+					}
+
+					rowValues[i] = matchValue;
+
+					i++;
+				}
+
+				List<Reference<IRowListener>> applicableListeners = listenersByHash.get(createPKHashKey(rowValues));
+
+				if (applicableListeners != null)
+				{
+					for (Reference<IRowListener> ref : applicableListeners)
+					{
+						IRowListener l = ref.get();
+
+						if (l != null && l != skip)
+						{
+							l.notifyChange(e);
+						}
+					}
+				}
+			}
+			else
+			{
+				for (List<Reference<IRowListener>> refs : listenersByHash.values())
+				{
+					for (Reference<IRowListener> ref : refs)
+					{
+						IRowListener l = ref.get();
+
+						if (l != null && l != skip)
+						{
+							l.notifyChange(e);
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -621,7 +807,12 @@ public class RowManager implements IModificationListener, IFoundSetEventListener
 
 	void fireNotifyChange(IRowListener skip, Row r, String pkHashKey, Object[] changedColumns, int eventType, boolean isAggregateChange)
 	{
-		if (listeners.size() > 0)
+		if (fsm.experimentalFoundSetNotifyChange)
+		{
+			RowEvent e = new RowEvent(this, r, pkHashKey, eventType, changedColumns, isAggregateChange);
+			forEachListener(e, skip);
+		}
+		else if (listeners.size() > 0)
 		{
 			RowEvent e = new RowEvent(this, r, pkHashKey, eventType, changedColumns, isAggregateChange);
 
@@ -643,7 +834,12 @@ public class RowManager implements IModificationListener, IFoundSetEventListener
 
 	void firePKUpdated(Row row, String oldKeyHash)
 	{
-		if (listeners.size() > 0)
+		if (fsm.experimentalFoundSetNotifyChange)
+		{
+			RowEvent e = new RowEvent(this, row, RowEvent.PK_UPDATED, oldKeyHash);
+			forEachListener(e);
+		}
+		else if (listeners.size() > 0)
 		{
 			RowEvent e = new RowEvent(this, row, RowEvent.PK_UPDATED, oldKeyHash);
 
@@ -1015,6 +1211,11 @@ public class RowManager implements IModificationListener, IFoundSetEventListener
 		}
 	}
 
+	/**
+	 * Callback for when the table uses DBIdents as PK and a new row gets saves and the real PK value gets set on the DBIdent
+	 *
+	 * @param row
+	 */
 	void pkUpdated(Row row)
 	{
 		String newKeyHash = row.recalcPKHashKey();
@@ -1023,6 +1224,48 @@ public class RowManager implements IModificationListener, IFoundSetEventListener
 			pkRowMap.put(newKeyHash,
 				new SoftReferenceWithData<Row, Pair<Map<String, List<CalculationDependency>>, CalculationDependencyData>>(row, referenceQueue));
 			clearAndCheckCache();
+		}
+
+		// As soon as the PK gets set on a DBIdentValue, the entries in the relatedListener cache that contain the hashed empty DbIdentValue will never be found anymore
+		//	as when a hash for the row being processed gets calculated from that point onwards will contain the actual PK value
+		//  Hence the current approach here will introduce a brief moment in which, when forEachListener gets called from another thread than the EventDispatchThread
+		//	that the listeners that are still cached under the old hash based on the empty DBIdentValue will not be found as a match
+
+		// Update the mapping in relatedListeners from being based on the empty DBIdent to being based on the actual PK value
+		//	need to make sure the remapping happens in a Threadsafe manner, which might be challenging, cause it operates on multiple keys in the map
+
+		/*
+		 * TODO figure this one out...
+		 *
+		 * In one atomic step, the following should happen: - add new key with the values of the old key
+		 *
+		 * The old key will never get hit anymore after the PK value is set on the DBIdent, because for looking up the applicable listeners, the current row
+		 * values are hashed and those will contain the
+		 */
+
+		// Row.setDbIdentValue (which calls DbIdentValue.setPKValue and calls this method) ALWAYs happens in the eventDispatchThread,
+		//	because it's always done from within EditRecordList, which checks if running in the eventDispatchThread
+		// 	Note that DbIdentValue.setPKValue is also called from another thread by the closed-source serverside code
+
+		WeakHashMap<Row, Pair<List<String>, List<String>>> m = new WeakHashMap<Row, Pair<List<String>, List<String>>>();
+
+		if (!fsm.getApplication().isEventDispatchThread())
+		{
+			Debug.error("Unexpected call to RowManager.pkUpdated from outside the EventdispatchThread"); //$NON-NLS-1$
+			return;
+		}
+
+		Pair<List<String>, List<String>> p = m.get(row);
+		List<String> hashes = p.getRight();
+
+		Map<String, List<Reference<IRowListener>>> listenersByHash = relatedListeners.get(p.getLeft());
+
+		for (String hash : hashes)
+		{
+			for (Reference<IRowListener> ref : listenersByHash.remove(hash))
+			{
+				register(ref.get());
+			}
 		}
 	}
 

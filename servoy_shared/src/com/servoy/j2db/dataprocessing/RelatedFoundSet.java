@@ -26,12 +26,14 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.StringTokenizer;
+import java.util.TreeMap;
 
 import org.mozilla.javascript.NativeJavaMethod;
 import org.mozilla.javascript.Scriptable;
 
 import com.servoy.base.query.IBaseSQLCondition;
 import com.servoy.base.scripting.annotations.ServoyClientSupport;
+import com.servoy.j2db.FlattenedSolution;
 import com.servoy.j2db.dataprocessing.ValueFactory.DbIdentValue;
 import com.servoy.j2db.persistence.Column;
 import com.servoy.j2db.persistence.IRepository;
@@ -46,6 +48,7 @@ import com.servoy.j2db.query.QuerySelect;
 import com.servoy.j2db.query.TablePlaceholderKey;
 import com.servoy.j2db.querybuilder.impl.QBSelect;
 import com.servoy.j2db.util.Debug;
+import com.servoy.j2db.util.Pair;
 import com.servoy.j2db.util.SafeArrayList;
 import com.servoy.j2db.util.ServoyException;
 import com.servoy.j2db.util.Utils;
@@ -60,6 +63,8 @@ public abstract class RelatedFoundSet extends FoundSet
 {
 
 	private static NativeJavaMethod maxRecord;
+
+	private Pair<List<String>, Object[]> stuff = null; // TODO rename
 
 	static
 	{
@@ -120,6 +125,8 @@ public abstract class RelatedFoundSet extends FoundSet
 			fillAggregates(aggregateSelect, aggregateData);
 		}
 
+		initPrimaryValueCache();
+
 		if (rowManager != null && !(parent instanceof FindState)) rowManager.register(this);
 
 		initialized = true;
@@ -130,7 +137,132 @@ public abstract class RelatedFoundSet extends FoundSet
 	{
 		super(app, parent, relationName, sheet, null, null);
 		getPksAndRecords().setPksAndQuery(new BufferedDataSet(), 0, null);
+
 		initialized = true;
+	}
+
+	private void initPrimaryValueCache()
+	{
+		// PB the logic below is pretty much taken 1 on 1 from notifyChange_checkForNewRow
+		//	The original code is still in there, could maybe be removed/consolidated/...
+		FlattenedSolution flat = fsm.getApplication().getFlattenedSolution();
+		Relation relation = flat.getRelation(relationName);
+
+		Column[] fCols;
+		try
+		{
+			fCols = relation.getForeignColumns(flat);
+		}
+		catch (RepositoryException e)
+		{
+			e.printStackTrace();
+			return;
+		}
+		int[] operators = relation.getOperators();
+
+		Placeholder whereArgsPlaceholder = creationSqlSelect.getPlaceholder(
+			SQLGenerator.createRelationKeyPlaceholderKey(creationSqlSelect.getTable(), relationName));
+
+		if (whereArgsPlaceholder == null || !whereArgsPlaceholder.isSet())
+		{ //how can this happen??
+			StringBuilder columns = new StringBuilder();
+			columns.append("(");
+			if (fCols != null && fCols.length > 0)
+			{
+				for (Column col : fCols)
+				{
+					columns.append(col.getName());
+					columns.append(",");
+				}
+				columns.setLength(columns.length() - 1);
+			}
+			columns.append(")");
+			Debug.error("RelatedFoundset check for relation:" + relationName + " for a new row, creation args " + columns + "not found!!"); //$NON-NLS-1$
+			return;
+		}
+
+		// foreignData is a matrix as wide as the relation keys and 1 deep
+		Object[][] primaryValues = (Object[][])whereArgsPlaceholder.getValue(); // Really get only the where params not all of them (like table filter)
+
+		if (primaryValues.length != fCols.length) //how can this happen??
+		{
+			StringBuilder columns = new StringBuilder();
+			columns.append('(');
+			if (fCols.length > 0)
+			{
+				for (Column col : fCols)
+				{
+					columns.append(col.getName());
+					columns.append(',');
+				}
+				columns.setLength(columns.length() - 1);
+			}
+			columns.append(')');
+
+			StringBuilder data = new StringBuilder();
+			data.append('(');
+			if (primaryValues.length > 0)
+			{
+				for (Object[] d : primaryValues)
+				{
+					data.append('[');
+					if (d.length > 0)
+					{
+						for (Object object : d)
+						{
+							data.append(object);
+							data.append(',');
+						}
+						data.setLength(data.length() - 1);
+					}
+					data.append(']');
+				}
+				data.setLength(data.length() - 1);
+			}
+			data.append(')');
+
+			Debug.error("RelatedFoundset check for relation:" + relationName + " for new row, creation args " + columns + " and relation args " + data + //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+				" are not the same!!"); //$NON-NLS-1$
+			return;
+		}
+
+		// Using TreeMap to make sure all keys are in alphabetical order, so the order in which the relationItems are defined is ignored
+		//	resulting in more optimized (related) listener caching in the RowManager
+		Map<String, Object> map = new TreeMap<String, Object>(String.CASE_INSENSITIVE_ORDER);
+
+		for (int i = 0; i < fCols.length; i++)
+		{
+//			/fCols[i].getColumnInfo().getAutoEnterType()
+			if (operators[i] == IBaseSQLCondition.EQUALS_OPERATOR) // Only looking at RelationItems using the EQUALS operator, because that is easiest to implement and will optimize 95% of the use cases
+			{
+				/*
+				 * FIXME the values might go stale if the parent record is new, the relation might use the DBIdent PK column or use databaseManaged column
+				 *
+				 * The problem: - RFSes are cached by their whereArgs (hashed) - a whereArgs value might be a DBIdent or db managed or db default column - when
+				 * determining whether a inserted/updated row should result in calling notifyChange on an IRowListener (=== Foundset instances), the row might
+				 * have the DBIdent as value or the real value (f.e. an int or UUID) - the DBIdent coming from the inserted/updated Row can be unwrapped, so
+				 * that isn't the problem - but if the Row already has the unwrapped value but the cache is still based on the dbident, it won't find the
+				 * match...
+				 *
+				 * How to fix this? - if the cache could be updated as soon as the DBIdent value is known and when matching a Row against IRowListeners the
+				 * DBIdent gets unwrapped properly, things should be fine - The cache cannot have a mapping for both the DBIdent and the unwrapped value,
+				 * because that would cause double fires
+				 *
+				 * The only place where the actual value is set on the DBIdent value is in EditRecordList.stopEditImpl > Row.setDbIdentValue >
+				 * DbIdentValue.setPKValue
+				 *
+				 * Qs: - what would happen to a DBIdent which has its PKValue set if there's a rollback of sorts?
+				 */
+				map.put(fCols[i].getDataProviderID(), fCols[i].getAsRightType(primaryValues[i][0]));
+			}
+		}
+
+		stuff = new Pair<List<String>, Object[]>(new ArrayList<String>(map.keySet()), map.values().toArray());
+	}
+
+	public Pair<List<String>, Object[]> getRelationKeysValueMapping() // TODO proper name?
+	{
+		return stuff;
 	}
 
 	/**
@@ -869,6 +1001,14 @@ public abstract class RelatedFoundSet extends FoundSet
 		{
 			return;
 		}
+		
+		// PB logic below here is to a certain extend already executed in initPrimaryValueCache
+		//	thus might be (partially) obsolete and/or could be optimized by using the result of initPrimaryValueCache
+		//  
+		// This code will not be hit anymore if the record and related foundset dont match based on one of the relationitems that use the equal operator
+		//   but will hit if the rl's with equal operators match.
+		//   IF the relation contains more RL's that use other operators, the code below still needs to check whether the record matches the FS
+		//  The logic below itself could maybe be unduplicated by extracting it into a utility method which the code here and the code in initPrimaryValueCache both call
 
 		// check if sql where is still the same, if there is search in it do nothing
 		AndOrCondition createCondition = creationSqlSelect.getCondition(SQLGenerator.CONDITION_RELATION);
