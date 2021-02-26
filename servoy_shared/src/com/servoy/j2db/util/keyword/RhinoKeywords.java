@@ -16,81 +16,78 @@
 */
 package com.servoy.j2db.util.keyword;
 
+import java.util.HashSet;
+import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
 @SuppressWarnings("nls")
 public class RhinoKeywords
 {
-	public final static String[] keywords = new String[] { // Currently in use by Rhino.
-	"break", 
-	"case", 
-	"catch", 
-	"continue", 
-	"default", 
-	"delete", 
-	"do", 
-	"else", 
-	"finally", 
-	"for", 
-	"function", 
-	"if", 
-	"in", 
-	"instanceof", 
-	"new", 
-	"return", 
-	"switch", 
-	"this", 
-	"throw", 
-	"try", 
-	"typeof", 
-	"var", 
-	"void", 
-	"while", 
-	"with",  
+	private final static Set<String> keywords = Stream.of( // Currently in use by Rhino.
+		"break",
+		"case",
+		"catch",
+		"continue",
+		"default",
+		"delete",
+		"do",
+		"else",
+		"finally",
+		"for",
+		"function",
+		"if",
+		"in",
+		"instanceof",
+		"new",
+		"return",
+		"switch",
+		"this",
+		"throw",
+		"try",
+		"typeof",
+		"var",
+		"void",
+		"while",
+		"with",
 
-	// Reserved by Rhino for future use.
-	"abstract", 
-	"boolean", 
-	"byte", 
-	"char", 
-	"class", 
-	"const", 
-	"debugger", 
-	"double", 
-	"enum", 
-	"export", 
-	"extends", 
-	"final", 
-	"float", 
-	"goto", 
-	"implements", 
-	"import", 
-	"int", 
-	"interface", 
-	"long", 
-	"native", 
-	"package", 
-	"private", 
-	"protected", 
-	"public", 
-	"short", 
-	"static", 
-	"super", 
-	"synchronized", 
-	"throws", 
-	"transient", 
-	"volatile"  
-	};
+		// Reserved by Rhino for future use.
+		"abstract",
+		"boolean",
+		"byte",
+		"char",
+		"class",
+		"const",
+		"debugger",
+		"double",
+		"enum",
+		"export",
+		"extends",
+		"final",
+		"float",
+		"goto",
+		"implements",
+		"import",
+		"int",
+		"interface",
+		"long",
+		"native",
+		"package",
+		"private",
+		"protected",
+		"public",
+		"short",
+		"static",
+		"super",
+		"synchronized",
+		"throws",
+		"transient",
+		"volatile").collect(Collectors.toCollection(HashSet::new));
 
 	public static boolean checkIfKeyword(String name)
 	{
 		if (name == null) return false;
-		String lname = name.trim().toLowerCase();
-		for (String element : keywords)
-		{
-			if (element.equals(lname))
-			{
-				return true;
-			}
-		}
-		return false;
+
+		return keywords.contains(name.trim().toLowerCase());
 	}
 }

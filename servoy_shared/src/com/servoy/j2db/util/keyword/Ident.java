@@ -22,140 +22,139 @@ import java.util.Set;
 
 import com.servoy.j2db.util.Utils;
 
-
 /**
  * @author jblok
  */
 @SuppressWarnings("nls")
 public class Ident
 {
-	public final static String[] java_js_keywords = new String[] { //Java or JS Related
-	"abstract", //
-	"double", //
-	"int", //
-	"strictfp", //
-	"boolean", //
-	"else", //
-	"interface", //
-	"super", //
-	"break", //
-	"extends", //
-	"long", //
-	"switch", //
-	"byte", //
-	"final", //
-	"native", //
-	"synchronized", //
-	"case", //
-	"finally", //
-	"new", //
-	"this", //
-	"catch", //
-	"float", //
-	"package", //
-	"throw", //
-	"char", //
-	"for", //
-	"private", //
-	"throws", //
-	"class", //
-	"goto", //
-	"protected", //
-	"transient", //
-	"const", //
-	"if", //
-	"public", //
-	"try", //
-	"continue", //
-	"implements", //
-	"return", //
-	"void", //
-	"default", //
-	"import", //
-	"short", //
-	"volatile", //
-	"do", //
-	"instanceof", //
-	"static", //
-	"while", //
+	private final static Set<String> java_js_keywords = new HashSet<String>(Arrays.asList( //Java or JS Related
+		"abstract", //
+		"double", //
+		"int", //
+		"strictfp", //
+		"boolean", //
+		"else", //
+		"interface", //
+		"super", //
+		"break", //
+		"extends", //
+		"long", //
+		"switch", //
+		"byte", //
+		"final", //
+		"native", //
+		"synchronized", //
+		"case", //
+		"finally", //
+		"new", //
+		"this", //
+		"catch", //
+		"float", //
+		"package", //
+		"throw", //
+		"char", //
+		"for", //
+		"private", //
+		"throws", //
+		"class", //
+		"goto", //
+		"protected", //
+		"transient", //
+		"const", //
+		"if", //
+		"public", //
+		"try", //
+		"continue", //
+		"implements", //
+		"return", //
+		"void", //
+		"default", //
+		"import", //
+		"short", //
+		"volatile", //
+		"do", //
+		"instanceof", //
+		"static", //
+		"while", //
 
 		//JS Related
-	"null", //
-	"export", //
-	"undefined", //
-	"constant", //
-	"function", //
-	"debugger", //
-	"in", //
-	"typeof", //
-	"native", //
-	"var", //
-	"enum", //
-	"export", //
-	"with", //
-	"delete", //
-	"date", // to prevent Date
-	"array", // to prevent Array
-	"arguments", // to prevent an dataprovider with the name arguments
-	};
+		"null", //
+		"export", //
+		"undefined", //
+		"constant", //
+		"function", //
+		"debugger", //
+		"in", //
+		"typeof", //
+		"native", //
+		"var", //
+		"enum", //
+		"export", //
+		"with", //
+		"delete", //
+		"date", // to prevent Date
+		"array", // to prevent Array
+		"arguments" // to prevent an dataprovider with the name arguments
+	));
 
-	public final static String[] servoy_keywords = new String[] {
+	private final static Set<String> servoy_keywords = new HashSet<String>(Arrays.asList(
 		//Standard j2db DOM things
-	"databaseManager", //
-	"datasources", //
-	"application", //
-	"currentform", //
-	"currentcontroller", //
-	"currentRecordIndex", //
-	"history", //
-	"math", //
-	"form", //
-	"controller", //
-	"elements", //
-	"length", //
-	"globals", //
-	"scopes", //
-	"plugins", //
-	"forms", //
-	"foundset", //
-	"utils", //
-	"security", //
-	"solutionModel", //
-	"recordIndex", //
-	"allnames", //
-	"allmethods", //
-	"allrelations", //
-	"allvariables", //
-	"exception", //
-	"jsunit", //
-	"servoyDeveloper", //
-	// New
-	"_super" };
+		"databaseManager", //
+		"datasources", //
+		"application", //
+		"currentform", //
+		"currentcontroller", //
+		"currentRecordIndex", //
+		"history", //
+		"math", //
+		"form", //
+		"controller", //
+		"elements", //
+		"length", //
+		"globals", //
+		"scopes", //
+		"plugins", //
+		"forms", //
+		"foundset", //
+		"utils", //
+		"security", //
+		"solutionModel", //
+		"recordIndex", //
+		"allnames", //
+		"allmethods", //
+		"allrelations", //
+		"allvariables", //
+		"exception", //
+		"jsunit", //
+		"servoyDeveloper", //
+		// New
+		"_super"));
 
-	private final static String[] reserved_os_words = new String[] { // Words that cannot be used on all OS platforms
-	"aux", //
-	"com1", //
-	"com2", //
-	"com3", //
-	"com4", //
-	"com5", //
-	"com6", //
-	"com7", //
-	"com8", //
-	"com9", //
-	"con", //
-	"lpt1", //
-	"lpt2", //
-	"lpt3", //
-	"lpt4", //
-	"lpt5", //
-	"lpt6", //
-	"lpt7", //
-	"lpt8", //
-	"lpt9", //
-	"nul", //
-	"prn", //
-	};
+	private final static Set<String> reserved_os_words = new HashSet<String>(Arrays.asList( // Words that cannot be used on all OS platforms
+		"aux", //
+		"com1", //
+		"com2", //
+		"com3", //
+		"com4", //
+		"com5", //
+		"com6", //
+		"com7", //
+		"com8", //
+		"com9", //
+		"con", //
+		"lpt1", //
+		"lpt2", //
+		"lpt3", //
+		"lpt4", //
+		"lpt5", //
+		"lpt6", //
+		"lpt7", //
+		"lpt8", //
+		"lpt9", //
+		"nul", //
+		"prn" //
+	));
 
 	private static final Set<String> mobile_window_reserved_words = new HashSet<String>(Arrays.asList("addEventListener", "alert", "applicationCache",
 		"ArrayBuffer", "atob", "Attr", "Audio", "AudioProcessingEvent", "back", "BeforeLoadEvent", "Blob", "blur", "btoa", "CanvasGradient", "CanvasPattern",
@@ -237,30 +236,23 @@ public class Ident
 
 	public static boolean checkIfKeyword(String name)
 	{
-		return checkName(java_js_keywords, name) || checkName(servoy_keywords, name);
+		return name != null && (checkIfJavascriptKeyword(name) || servoy_keywords.contains(name.trim().toLowerCase()));
 	}
 
 	public static boolean checkIfJavascriptKeyword(String name)
 	{
-		return checkName(java_js_keywords, name);
+		return name != null && java_js_keywords.contains(name.trim().toLowerCase());
 	}
 
 	public static boolean checkIfReservedOSWord(String name)
 	{
-		return checkName(reserved_os_words, name);
+		return name != null && reserved_os_words.contains(name.trim().toLowerCase());
 	}
 
 	public static boolean checkIfReservedBrowserWindowObjectWord(String name)
 	{
 		// case sensitive search
 		return name != null && (mobile_window_reserved_words.contains(name.trim()) || mobile_window_gwt_used_words.contains(name.trim()));
-	}
-
-	private static boolean checkName(String[] names, String name)
-	{
-		if (name == null) return false;
-		String lname = name.trim().toLowerCase();
-		return Arrays.asList(names).indexOf(lname) >= 0;
 	}
 
 	public static String generateNormalizedName(String plainSQLName)
@@ -275,7 +267,7 @@ public class Ident
 		{
 			switch (chars[i])
 			{
-			// not allowed in windows
+				// not allowed in windows
 				case '/' :
 				case '\\' :
 				case '?' :

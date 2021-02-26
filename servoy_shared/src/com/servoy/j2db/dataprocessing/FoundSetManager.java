@@ -671,7 +671,7 @@ public class FoundSetManager implements IFoundSetManagerInternal
 			{
 				retval = sr.get();
 				if (retval == null && Debug.tracing())
-					Debug.trace("-----------CacheMiss for related founset " + relationName + " for keys " + relatedArguments.hash); //$NON-NLS-1$ //$NON-NLS-2$
+					Debug.trace("-----------CacheMiss for related foundset " + relationName + " for keys " + relatedArguments.hash); //$NON-NLS-1$ //$NON-NLS-2$
 				//else Debug.trace("-----------CacheHit!! for related foundset " + relID + " for keys " + calcPKHashKey);
 			}
 			else
